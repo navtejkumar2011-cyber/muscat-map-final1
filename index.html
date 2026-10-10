@@ -211,9 +211,10 @@ async function ask(q){
   try{
     const r=await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({name:nameOf(cur.tags||{})||cur.name,facts:cur.facts,question:q,lang})});
-    if(!r.ok)throw new Error("bad");
-    const j=await r.json();out.textContent=j.answer||T[lang].err;
-  }catch(e){out.textContent=location.protocol==="file:"?T[lang].aiOff:T[lang].err}
+    let j={};try{j=await r.json()}catch(_){}
+    if(!r.ok||!j.answer){out.textContent=T[lang].err+" ["+r.status+(j.error?": "+String(j.error).slice(0,160):"")+"]";busy=false;return}
+    out.textContent=j.answer;
+  }catch(e){out.textContent=location.protocol==="file:"?T[lang].aiOff:T[lang].err+" ["+(e.message||"")+"]"}
   busy=false;
 }
 $("send").onclick=()=>ask($("q").value);
