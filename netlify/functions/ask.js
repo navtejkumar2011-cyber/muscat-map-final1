@@ -19,7 +19,7 @@ exports.handler = async (event) => {
     "Place: " + String(name).slice(0, 200) + "\nKnown facts: " + String(facts).slice(0, 2500) +
     "\n\nQuestion: " + String(question).slice(0, 500);
 
-  const model = process.env.GROQ_MODEL || "llama-3.3-70b-versatile"; // check console.groq.com/docs/models for a current model name
+  const model = process.env.GROQ_MODEL || "openai/gpt-oss-20b"; // check console.groq.com/docs/models for a current model name
   try {
     const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
@@ -27,11 +27,11 @@ exports.handler = async (event) => {
         "Content-Type": "application/json",
         "Authorization": "Bearer " + (process.env.GROQ_API_KEY || "")
       },
-      body: JSON.stringify({
+      body: JSON.stringify(Object.assign({
         model,
         messages: [{ role: "system", content: system }, { role: "user", content: user }],
-        max_tokens: 300
-      })
+        max_tokens: 1000
+      }, /gpt-oss/.test(model) ? { reasoning_effort: "low" } : {}))
     });
     const j = await r.json();
     const answer = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
