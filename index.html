@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask the Map – Muscat</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{--ink:#14202b;--mute:#5a6b7a;--card:#fff;--bg:#eef2f5;--line:#cfd8e0;--accent:#1b4f8a}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:16px/1.5 system-ui,-apple-system,"Segoe UI","Noto Sans Devanagari",sans-serif;color:var(--ink);background:var(--bg)}
+.app{height:100dvh;display:grid;grid-template-columns:1fr 390px}
+.mapcol{position:relative;min-height:0}
+#map{position:absolute;inset:0}
+.bar{position:absolute;z-index:1000;top:10px;left:10px;right:10px;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.bar>*{pointer-events:auto}
+.row{display:flex;gap:8px}
+.search{flex:1;min-width:0;padding:10px 14px;border:1px solid var(--line);border-radius:999px;font:inherit;box-shadow:0 2px 8px #0003}
+.langs{display:flex;background:var(--card);border-radius:999px;overflow:hidden;box-shadow:0 2px 8px #0003}
+.langs button{border:0;background:none;padding:0 12px;font:inherit;font-size:.85rem;cursor:pointer;color:var(--mute)}
+.langs button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:600}
+.cats{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
+.cats button{flex:none;border:0;background:var(--card);border-radius:999px;padding:6px 12px;font:inherit;font-size:.85rem;cursor:pointer;box-shadow:0 2px 6px #0003}
+.cats button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.results{background:var(--card);border-radius:12px;box-shadow:0 2px 8px #0003;max-height:220px;overflow:auto}
+.results:empty{display:none}
+.results button{display:block;width:100%;text-align:left;border:0;border-bottom:1px solid var(--line);background:none;padding:9px 12px;font:inherit;font-size:.9rem;cursor:pointer}
+.status{align-self:flex-start;background:var(--card);padding:4px 10px;border-radius:8px;font-size:.8rem;box-shadow:0 2px 6px #0003}
+.status:empty{display:none}
+aside{background:var(--card);border-left:1px solid var(--line);padding:16px;overflow:auto}
+aside h2{margin:0 0 2px;font-size:1.2rem}
+.type{color:var(--mute);font-size:.9rem;margin:0 0 10px}
+.info{font-size:.9rem;color:var(--mute);margin:0 0 10px;overflow-wrap:anywhere}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}
+.chips button{border:1px solid var(--line);background:none;color:var(--accent);border-radius:8px;padding:6px 10px;font:inherit;font-size:.85rem;cursor:pointer;text-align:left}
+.log{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+.msg{padding:9px 12px;border-radius:12px;max-width:94%;white-space:pre-wrap;overflow-wrap:anywhere}
+.u{align-self:flex-end;background:var(--accent);color:#fff}
+.a{align-self:flex-start;background:var(--bg);border:1px solid var(--line)}
+.ask{display:flex;gap:8px}
+.ask input{flex:1;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:10px;font:inherit}
+.ask button{border:0;background:var(--accent);color:#fff;border-radius:10px;padding:0 16px;font:inherit;font-weight:600;cursor:pointer}
+.hint{color:var(--mute);font-size:.9rem}
+@media (max-width:760px){.app{grid-template-columns:1fr;grid-template-rows:1fr 46dvh}aside{border-left:0;border-top:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="mapcol">
+    <div id="map"></div>
+    <div class="bar">
+      <div class="row">
+        <input class="search" id="search" type="search" autocomplete="off">
+        <div class="langs"><button data-l="en">EN</button><button data-l="hi">हिं</button><button data-l="fr">FR</button></div>
+      </div>
+      <div class="results" id="results"></div>
+      <div class="cats" id="cats"></div>
+      <div class="status" id="status"></div>
+    </div>
+  </div>
+  <aside>
+    <p class="hint" id="hint"></p>
+    <div id="place" hidden>
+      <h2 id="pname"></h2>
+      <p class="type" id="ptype"></p>
+      <p class="info" id="pinfo"></p>
+      <div class="chips" id="chips"></div>
+      <div class="log" id="log"></div>
+      <div class="ask"><input id="q" autocomplete="off"><button id="send"></button></div>
+    </div>
+  </aside>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const API = "/api/ask";               // your serverless function (see README)
+const OVERPASS = ["https://overpass-api.de/api/interpreter","https://overpass.private.coffee/api/interpreter","https://overpass.kumi.systems/api/interpreter"];
+
+const CATS = [
+  {k:"tourism", q:'["tourism"~"attraction|museum|viewpoint|gallery|zoo"]', color:"#d9822b"},
+  {k:"food",    q:'["amenity"~"restaurant|cafe|fast_food"]',               color:"#c0392b"},
+  {k:"health",  q:'["amenity"~"hospital|clinic|pharmacy"]',                color:"#16a085"},
+  {k:"edu",     q:'["amenity"~"school|university|college"]',              color:"#8e44ad"},
+  {k:"mosque",  q:'["amenity"="place_of_worship"]',                        color:"#2c3e50"},
+  {k:"shop",    q:'["shop"~"mall|supermarket"]',                            color:"#2980b9"}
+];
+const T = {
+ en:{search:"Search any place in Oman…",hint:"Search, or pick a category and tap a pin. Zoom in to see places.",cats:{tourism:"Attractions",food:"Food",health:"Health",edu:"Education",mosque:"Worship",shop:"Shopping"},zoom:"Zoom in to load places",loading:"Loading places…",none:"No places found here",ovErr:"Could not load places. Try again.",ph:"Ask about this place…",send:"Ask",sugg:["When is the best time to visit?","Is it good for kids?","How do I get there?"],think:"Thinking…",aiOff:"The AI is not connected yet. See the README to deploy the /api/ask function.",err:"Could not get an answer. Try again.",hours:"Hours",phone:"Phone",web:"Website",addr:"Address"},
+ hi:{search:"ओमान में कोई भी जगह खोजें…",hint:"खोजें, या श्रेणी चुनकर पिन दबाएँ। जगहें देखने के लिए ज़ूम करें।",cats:{tourism:"दर्शनीय स्थल",food:"खाना",health:"स्वास्थ्य",edu:"शिक्षा",mosque:"पूजा स्थल",shop:"खरीदारी"},zoom:"जगहें देखने के लिए ज़ूम करें",loading:"जगहें लोड हो रही हैं…",none:"यहाँ कोई जगह नहीं मिली",ovErr:"जगहें लोड नहीं हो सकीं। फिर कोशिश करें।",ph:"इस जगह के बारे में पूछें…",send:"पूछें",sugg:["यहाँ जाने का सबसे अच्छा समय क्या है?","क्या यह बच्चों के लिए अच्छा है?","वहाँ कैसे पहुँचें?"],think:"सोच रहा हूँ…",aiOff:"AI अभी जुड़ा नहीं है। /api/ask फ़ंक्शन डिप्लॉय करने के लिए README देखें।",err:"जवाब नहीं मिल सका। फिर कोशिश करें।",hours:"समय",phone:"फ़ोन",web:"वेबसाइट",addr:"पता"},
+ fr:{search:"Rechercher un lieu à Oman…",hint:"Recherchez, ou choisissez une catégorie et touchez un repère. Zoomez pour voir les lieux.",cats:{tourism:"Sites",food:"Restauration",health:"Santé",edu:"Éducation",mosque:"Culte",shop:"Shopping"},zoom:"Zoomez pour charger les lieux",loading:"Chargement des lieux…",none:"Aucun lieu trouvé ici",ovErr:"Impossible de charger les lieux. Réessayez.",ph:"Posez une question sur ce lieu…",send:"Demander",sugg:["Quel est le meilleur moment pour y aller ?","Est-ce adapté aux enfants ?","Comment s'y rendre ?"],think:"Je réfléchis…",aiOff:"L'IA n'est pas encore connectée. Voir le README pour déployer /api/ask.",err:"Impossible d'obtenir une réponse. Réessayez.",hours:"Horaires",phone:"Téléphone",web:"Site web",addr:"Adresse"}
+};
+let lang="en", cat=null, cur=null, busy=false;
+const $=id=>document.getElementById(id);
+
+const map=L.map("map",{zoomControl:false}).setView([23.588,58.4059],12);
+L.control.zoom({position:"bottomright"}).addTo(map);
+// OpenStreetMap blocks pages opened as local files, so use Esri tiles in that case.
+if(location.protocol==="file:"){
+  L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",{maxZoom:19,attribution:"Tiles © Esri"}).addTo(map);
+}else{
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap contributors"}).addTo(map);
+}
+const layer=L.layerGroup().addTo(map);
+
+function typeOf(tags){return tags.tourism||tags.amenity||tags.shop||tags.cuisine||"place"}
+function nameOf(tags){return tags["name:"+lang]||tags.name||tags["name:en"]||""}
+
+function setLang(l){
+  lang=l;document.documentElement.lang=l;
+  document.querySelectorAll(".langs button").forEach(b=>b.setAttribute("aria-pressed",b.dataset.l===l));
+  $("search").placeholder=T[l].search;$("hint").textContent=T[l].hint;
+  $("q").placeholder=T[l].ph;$("send").textContent=T[l].send;
+  const c=$("cats");c.textContent="";
+  CATS.forEach(x=>{const b=document.createElement("button");b.textContent=T[l].cats[x.k];
+    b.setAttribute("aria-pressed",cat===x.k);b.onclick=()=>{cat=(cat===x.k?null:x.k);setLang(lang);loadPlaces()};c.appendChild(b)});
+  if(cur)showPlace(cur,true);
+}
+
+let ctrl=null, moveTimer=null;
+const cache={};
+function wait(ms){return new Promise(r=>setTimeout(r,ms))}
+function drawPlaces_(c,els){
+  layer.clearLayers();let n=0;
+  els.forEach(e=>{
+    const lat=e.lat??(e.center&&e.center.lat), lon=e.lon??(e.center&&e.center.lon);
+    if(lat==null||!nameOf(e.tags||{}))return;
+    n++;
+    L.circleMarker([lat,lon],{radius:8,color:"#fff",weight:2,fillColor:c.color,fillOpacity:1})
+      .addTo(layer).bindTooltip(nameOf(e.tags))
+      .on("click",()=>showPlace({tags:e.tags,lat,lon}));
+  });
+  return n;
+}
+async function loadPlaces(){
+  if(ctrl)ctrl.abort();
+  layer.clearLayers();$("status").textContent="";
+  if(!cat)return;
+  if(map.getZoom()<14){$("status").textContent=T[lang].zoom;return}
+  const c=CATS.find(x=>x.k===cat), b=map.getBounds();
+  const r4=v=>v.toFixed(3);
+  const bbox=[b.getSouth(),b.getWest(),b.getNorth(),b.getEast()].map(r4).join(",");
+  const key=cat+"|"+bbox;
+  if(cache[key]){const n=drawPlaces_(c,cache[key]);$("status").textContent=n?"":T[lang].none;return}
+  ctrl=new AbortController();const mine=ctrl;
+  $("status").textContent=T[lang].loading;
+  const qs="?data="+encodeURIComponent(`[out:json][timeout:25];nwr${c.q}(${bbox});out center 120;`);
+  let j=null,lastErr="";
+  for(let attempt=0;attempt<3&&!j;attempt++){
+    if(attempt)await wait(2000*attempt);          // short pause, public servers limit requests
+    const urls=location.protocol==="file:"?OVERPASS.map(u=>u+qs):["/api/places?cat="+cat+"&bbox="+bbox];
+    for(const url of urls){
+      try{
+        const r=await fetch(url,{signal:mine.signal});
+        if(!r.ok){lastErr=url+" -> HTTP "+r.status;continue}
+        j=await r.json();break;
+      }catch(err){
+        if(err.name==="AbortError")return;         // a newer request replaced this one
+        lastErr=url+" -> "+err.message;
+      }
+    }
+  }
+  if(mine!==ctrl)return;
+  if(!j){console.error("Overpass failed:",lastErr);$("status").textContent=T[lang].ovErr;return}
+  cache[key]=j.elements;
+  const n=drawPlaces_(c,j.elements);
+  $("status").textContent=n?"":T[lang].none;
+}
+map.on("moveend",()=>{if(cat){clearTimeout(moveTimer);moveTimer=setTimeout(loadPlaces,700)}});
+
+async function showPlace(p,keepLog){
+  cur=p;
+  $("place").hidden=false;$("hint").hidden=true;
+  const t=p.tags||{};
+  $("pname").textContent=nameOf(t)||p.name||"";
+  $("ptype").textContent=String(typeOf(t)).replace(/_/g," ");
+  const L_=T[lang], bits=[];
+  if(t["addr:street"])bits.push(L_.addr+": "+[t["addr:housenumber"],t["addr:street"],t["addr:city"]].filter(Boolean).join(" "));
+  if(t.opening_hours)bits.push(L_.hours+": "+t.opening_hours);
+  if(t.phone)bits.push(L_.phone+": "+t.phone);
+  if(t.website)bits.push(L_.web+": "+t.website);
+  if(p.extra)bits.push(p.extra);
+  $("pinfo").textContent=bits.join("\n");$("pinfo").style.whiteSpace="pre-line";
+  const ch=$("chips");ch.textContent="";
+  L_.sugg.forEach(s=>{const b=document.createElement("button");b.textContent=s;b.onclick=()=>ask(s);ch.appendChild(b)});
+  if(!keepLog)$("log").textContent="";
+  p.facts=factsOf(p);
+  if(t.wikipedia&&!p.wiki){
+    try{
+      const [wl,...rest]=t.wikipedia.split(":");
+      const r=await fetch(`https://${wl}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(rest.join(":").replace(/ /g,"_"))}`);
+      const j=await r.json();p.wiki=j.extract||"";
+      p.facts=factsOf(p);
+    }catch(e){}
+  }
+}
+function factsOf(p){
+  const t=p.tags||{}, f=[];
+  f.push("Type: "+typeOf(t));
+  ["cuisine","opening_hours","phone","website","description","wheelchair","addr:street","addr:city"].forEach(k=>{if(t[k])f.push(k+": "+t[k])});
+  if(p.extra)f.push("Location: "+p.extra);
+  if(p.wiki)f.push("Wikipedia: "+p.wiki);
+  f.push("Coordinates: "+p.lat.toFixed(4)+", "+p.lon.toFixed(4));
+  return f.join(". ");
+}
+
+function add(cls,txt){const d=document.createElement("div");d.className="msg "+cls;d.textContent=txt;$("log").appendChild(d);d.scrollIntoView({block:"nearest"});return d}
+async function ask(q){
+  q=(q||"").trim();if(!q||busy||!cur)return;
+  busy=true;$("q").value="";add("u",q);const out=add("a",T[lang].think);
+  try{
+    const r=await fetch(API,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name:nameOf(cur.tags||{})||cur.name,facts:cur.facts,question:q,lang})});
+    if(!r.ok)throw new Error("bad");
+    const j=await r.json();out.textContent=j.answer||T[lang].err;
+  }catch(e){out.textContent=location.protocol==="file:"?T[lang].aiOff:T[lang].err}
+  busy=false;
+}
+$("send").onclick=()=>ask($("q").value);
+$("q").addEventListener("keydown",e=>{if(e.key==="Enter")ask($("q").value)});
+
+// Search (Nominatim / OpenStreetMap)
+let timer;
+$("search").addEventListener("input",e=>{
+  clearTimeout(timer);const v=e.target.value.trim();
+  if(v.length<3){$("results").textContent="";return}
+  timer=setTimeout(async()=>{
+    try{
+      const u="https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&countrycodes=om&viewbox=58.0,23.8,58.9,23.4&accept-language="+lang+"&q="+encodeURIComponent(v);
+      const j=await (await fetch(u)).json();
+      const box=$("results");box.textContent="";
+      j.forEach(r=>{
+        const b=document.createElement("button");b.textContent=r.display_name;
+        b.onclick=()=>{
+          box.textContent="";
+          const tags={};tags[r.category]=r.type;
+          const name=r.name||r.display_name.split(",")[0];tags.name=name;
+          map.flyTo([+r.lat,+r.lon],16);
+          showPlace({tags,lat:+r.lat,lon:+r.lon,name,extra:r.display_name});
+          L.marker([+r.lat,+r.lon]).addTo(layer);
+        };
+        box.appendChild(b);
+      });
+    }catch(e){}
+  },500);
+});
+document.querySelectorAll(".langs button").forEach(b=>b.onclick=()=>setLang(b.dataset.l));
+setLang("en");
+</script>
+</body>
+</html>
